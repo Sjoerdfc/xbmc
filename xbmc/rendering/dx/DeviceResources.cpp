@@ -276,7 +276,7 @@ bool DX::DeviceResources::SetFullScreen(bool fullscreen, RESOLUTION_INFO& res)
           m_swapChain->GetFullscreenState(&bFullScreen, nullptr);
         }
         bool resized = SUCCEEDED(m_swapChain->ResizeTarget(&currentMode));
-        if (resized) 
+        if (resized)
         {
           // some system doesn't inform windowing about desktop size changes
           // so we have to change output size before resizing buffers
@@ -556,6 +556,7 @@ void DX::DeviceResources::ResizeBuffers()
   bool bHWStereoEnabled = RENDER_STEREO_MODE_HARDWAREBASED ==
                           CServiceBroker::GetWinSystem()->GetGfxContext().GetStereoMode();
   bool windowed = true;
+  bool isHdrEnabled = false;
   HRESULT hr = E_FAIL;
   DXGI_SWAP_CHAIN_DESC1 scDesc = {};
 
@@ -571,9 +572,13 @@ void DX::DeviceResources::ResizeBuffers()
       DestroySwapChain();
   }
 
-  if (m_swapChain) // If the swap chain already exists, resize it.
+  isHdrEnabled = (HDR_STATUS::HDR_ON == CWIN32Util::GetWindowsHDRStatus());
+
+  if (m_swapChain != nullptr)
   {
     m_swapChain->GetDesc1(&scDesc);
+    isHdrEnabled ? scDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM
+        : scDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     hr = m_swapChain->ResizeBuffers(scDesc.BufferCount, lround(m_outputSize.Width),
                                     lround(m_outputSize.Height), scDesc.Format,
                                     windowed ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
@@ -598,9 +603,6 @@ void DX::DeviceResources::ResizeBuffers()
   }
   else // Otherwise, create a new one using the same adapter as the existing Direct3D device.
   {
-    HDR_STATUS hdrStatus = CWIN32Util::GetWindowsHDRStatus();
-    const bool isHdrEnabled = (hdrStatus == HDR_STATUS::HDR_ON);
-    const bool is10bitSafe = (hdrStatus != HDR_STATUS::HDR_UNSUPPORTED);
 
     DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
     swapChainDesc.Width = lround(m_outputSize.Width);
@@ -614,7 +616,7 @@ void DX::DeviceResources::ResizeBuffers()
     swapChainDesc.BufferCount = 3; // Xbox don't like 6 backbuffers (3 is fine even for 4K 60 fps)
 #endif
     // FLIP_DISCARD improves performance (needed in some systems for 4K HDR 60 fps)
-    swapChainDesc.SwapEffect = CSysInfo::IsWindowsVersionAtLeast(CSysInfo::WindowsVersionWin10)
+    swapChainDesc.SwapEffect = (m_d3dFeatureLevel >= D3D_FEATURE_LEVEL_12_0)
                                    ? DXGI_SWAP_EFFECT_FLIP_DISCARD
                                    : DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     swapChainDesc.Flags = windowed ? 0 : DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
@@ -629,7 +631,7 @@ void DX::DeviceResources::ResizeBuffers()
     ComPtr<IDXGISwapChain1> swapChain;
     if (m_d3dFeatureLevel >= D3D_FEATURE_LEVEL_11_0 && !bHWStereoEnabled &&
         (CServiceBroker::GetSettingsComponent()->GetAdvancedSettings()->m_bTry10bitOutput ||
-         isHdrEnabled || is10bitSafe))
+         isHdrEnabled))
     {
       swapChainDesc.Format = DXGI_FORMAT_R10G10B10A2_UNORM;
       hr = CreateSwapChain(swapChainDesc, scFSDesc, &swapChain);
@@ -1274,8 +1276,8 @@ DEBUG_INFO_RENDER DX::DeviceResources::GetDebugInfo() const
       m_IsTransferPQ ? "PQ" : "SDR", m_IsHDROutput ? "on" : "off");
 
   info.videoOutput = StringUtils::Format(
-      "Surfaces: {}x{}{} @ {:.3f} Hz, pixel: {} {}-bit, range: {} ({}-{})", desc.Width, desc.Height,
-      (md.ScanlineOrdering > DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE) ? "i" : "p",
+      "Output: {}x{}{} @ {:.2f} Hz, pixel: {} {}-bit, range: {} ({}-{})", desc.Width, desc.Height,
+      (md.ScanlineOrdering == DXGI_MODE_SCANLINE_ORDER_PROGRESSIVE) ? "p" : "i",
       static_cast<double>(md.RefreshRate.Numerator) /
           static_cast<double>(md.RefreshRate.Denominator),
       (desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM) ? "R10G10B10A2" : "B8G8R8A8", bits,
